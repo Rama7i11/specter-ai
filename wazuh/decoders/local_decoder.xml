@@ -1,0 +1,4 @@
+<!-- SPECTER-AI custom decoder — populated in /wazuh component build step -->
+<decoder name="specter-placeholder">
+  <prematch>^placeholder$</prematch>
+</decoder>

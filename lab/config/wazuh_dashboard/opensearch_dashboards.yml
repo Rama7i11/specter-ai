@@ -1,0 +1,16 @@
+server.host: 0.0.0.0
+server.port: 443
+opensearch.hosts: https://wazuh.indexer:9200
+opensearch.ssl.verificationMode: certificate
+opensearch.requestHeadersWhitelist: ["securitytenant","Authorization"]
+opensearch.ssl.certificateAuthorities: ["/usr/share/wazuh-dashboard/certs/root-ca.pem"]
+opensearch.ssl.certificate: "/usr/share/wazuh-dashboard/certs/wazuh-dashboard.pem"
+opensearch.ssl.key: "/usr/share/wazuh-dashboard/certs/wazuh-dashboard-key.pem"
+server.ssl.enabled: true
+server.ssl.certificate: "/usr/share/wazuh-dashboard/certs/wazuh-dashboard.pem"
+server.ssl.key: "/usr/share/wazuh-dashboard/certs/wazuh-dashboard-key.pem"
+uiSettings.overrides.defaultRoute: /app/wz-home
+logging.appenders.file.type: file
+logging.appenders.file.fileName: /var/log/wazuh-dashboard/opensearch_dashboards.log
+logging.appenders.file.layout.type: json
+logging.root.appenders: [default, file]

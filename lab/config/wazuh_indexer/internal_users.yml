@@ -1,0 +1,51 @@
+# Wazuh Indexer internal users
+# Passwords are bcrypt hashes. Change via Wazuh password tool after first boot:
+#   docker exec -it lab-wazuh.manager-1 /var/ossec/bin/wazuh-passwords-tool.sh -a
+#
+# Default admin password: SecretPassword
+# Default kibanaserver password: kibanaserver
+
+_meta:
+  type: "internalusers"
+  config_version: 2
+
+admin:
+  hash: "$2y$12$K/SpwjtB.wOHJ/Nc6GVpDOzvcYsDno5/9cKyfDgSKl8bPyxYaUEa"
+  reserved: true
+  backend_roles:
+    - "admin"
+  description: "Admin user"
+
+kibanaserver:
+  hash: "$2a$12$4AcgAt3xwOWadA5s5blL6ev39OXDNhmOesEoo33eZtrq2N0YrU3H."
+  reserved: true
+  description: "OpenSearch Dashboards user"
+
+kibanaro:
+  hash: "$2a$12$JJSXNfTowz7Uu5ttXfeYpeYE0arACvcwleFAGAY.Ee783oLIjfJXi"
+  reserved: false
+  backend_roles:
+    - "kibanauser"
+    - "readall"
+  description: "OpenSearch Dashboards read-only user"
+
+logstash:
+  hash: "$2a$12$u1ShR4l4uBS3Uv59Pa2y5.1uQuZBrZtmwfqKPiW9F8F68U0IXHb3."
+  reserved: false
+  backend_roles:
+    - "logstash"
+  description: "Logstash user"
+
+readall:
+  hash: "$2a$12$ae4ycwzwvLtZxwZ82RmiEunBbIPiAmGZduBAjKN0TXdwQFtCwARz2"
+  reserved: false
+  backend_roles:
+    - "readall"
+  description: "Read-all user"
+
+snapshotrestore:
+  hash: "$2y$12$DpwmetHKwgYnorbgdvORCenv4NAK8cPUg8AI6pxLCuWf/ALc0.v7W"
+  reserved: false
+  backend_roles:
+    - "snapshotrestore"
+  description: "Snapshot restore user"
