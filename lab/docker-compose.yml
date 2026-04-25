@@ -160,9 +160,30 @@ services:
       MYSQL_DATABASE: ${MYSQL_DATABASE:-bankdb}
     volumes:
       - bank_logs:/var/log/bank
+      - ../data:/data          # blocked_ips.json — written by backend, read by PHP
     depends_on:
       mysql:
         condition: service_healthy
+    networks:
+      - lab-net
+
+  # ── SPECTER-AI Detector (lightweight SQLi detection) ──────────────────────
+  # Tails bank access.log from the shared volume, pattern-matches SQLi,
+  # POSTs alerts to backend /webhook/wazuh. Wazuh containers stay up for
+  # visual SOC dashboard but are NOT in the alert path.
+  detector:
+    build: ../detector
+    hostname: detector
+    restart: always
+    environment:
+      LOG_PATH:       /var/log/bank/access.log
+      BACKEND_URL:    http://host.docker.internal:8000
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-specter-ai-webhook-secret}
+      POLL_INTERVAL:  "0.3"
+    volumes:
+      - bank_logs:/var/log/bank:ro   # read-only — bank owns this volume
+    depends_on:
+      - bank
     networks:
       - lab-net
 

@@ -10,7 +10,3 @@ server.ssl.enabled: true
 server.ssl.certificate: "/usr/share/wazuh-dashboard/certs/wazuh-dashboard.pem"
 server.ssl.key: "/usr/share/wazuh-dashboard/certs/wazuh-dashboard-key.pem"
 uiSettings.overrides.defaultRoute: /app/wz-home
-logging.appenders.file.type: file
-logging.appenders.file.fileName: /var/log/wazuh-dashboard/opensearch_dashboards.log
-logging.appenders.file.layout.type: json
-logging.root.appenders: [default, file]
