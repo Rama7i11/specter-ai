@@ -1,0 +1,6 @@
+openwakeword
+sounddevice
+numpy
+websockets>=12.0
+python-dotenv
+httpx
