@@ -109,19 +109,35 @@ async def demo_seed():
 async def demo_reset():
     """
     Full demo reset — call this between judging runs.
-    1. Clears data/blocked_ips.json  (bank PHP un-blocks attacker immediately)
-    2. Wipes all three in-memory deques
+    Clears all in-memory + on-disk state so the next run starts clean.
     Does NOT touch MySQL — call /demo/seed after if you also want a clean DB.
     """
     from defenses.block_ip import unblock_all
+    from defenses.lock_user import unlock_all
 
     unblock_all()
+    unlock_all()
+
     state.alerts.clear()
     state.defenses.clear()
     state.attack_log.clear()
+    state.PENDING_BRIEFINGS.clear()
+    state.SPOKEN_ALERT_IDS.clear()
+    state.LAST_BRIEFING_KEY.clear()
+    state.last_alert_time     = None
+    state.HARDWARE_MODE       = "UNKNOWN"
+    state.last_heartbeat_time = None
+    state.WAKE_REQUESTED      = False
+    state.wake_requested_at   = None
+    state._alert_counter      = 0
 
-    logger.info("demo/reset: all state cleared")
+    logger.info("demo/reset: full state cleared")
     return {
         "reset":   True,
-        "cleared": ["blocks", "alerts", "defenses", "attack_log"],
+        "cleared": [
+            "blocks", "locked_users",
+            "alerts", "defenses", "attack_log",
+            "pending_briefings", "spoken_alert_ids", "briefing_dedup_keys",
+            "hardware_mode", "alert_counter",
+        ],
     }

@@ -74,13 +74,16 @@ async def get_status():
         seconds_since_hb      = int(elapsed)
         effective_mode        = state.HARDWARE_MODE if elapsed <= state.HEARTBEAT_TIMEOUT else "UNKNOWN"
 
+    from defenses.lock_user import get_locked
+
     return {
-        "detector":              detector_status,
-        "backend":               "up",
-        "alerts_today":          alerts_today,
-        "blocked_ips":           len(get_blocked()),
-        "uptime":                int(now - state.START_TIME),
-        "hardware_mode":         effective_mode,
+        "detector":                detector_status,
+        "backend":                 "up",
+        "alerts_today":            alerts_today,
+        "blocked_ips":             len(get_blocked()),
+        "locked_users":            len(get_locked()),
+        "uptime":                  int(now - state.START_TIME),
+        "hardware_mode":           effective_mode,
         "seconds_since_heartbeat": seconds_since_hb,
     }
 

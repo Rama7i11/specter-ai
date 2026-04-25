@@ -6,8 +6,8 @@ Wake word  : "Hey Jarvis" (OpenWakeWord pretrained ONNX — no cloud, no auth)
 Wake button: Polls GET /voice/wake-status every 500 ms (Argon physical button
              via Particle webhook → POST /voice/wake → backend).
 Proactive  : Polls GET /voice/pending-briefing every 1 s.
-             If an unspoken alert is waiting AND hardware mode is not UNKNOWN
-             AND no Realtime session is active → opens a proactive session to
+             If an unspoken alert is waiting AND no Realtime session is active
+             → opens a proactive session to
              speak the briefing to the operator, then stays listening for commands.
 On wake    : Raw WebSocket → OpenAI Realtime API (gpt-4o-realtime-*).
              Mic (16 kHz PCM16) → OpenAI → speaker (24 kHz PCM16).
@@ -15,9 +15,9 @@ On wake    : Raw WebSocket → OpenAI Realtime API (gpt-4o-realtime-*).
              OpenAI calls execute_defensive_command(N) → POST /voice/command.
 
 Session lifetime
-  - Normal (wake-triggered)    : closes 5 s after response.done with no new speech
-  - Proactive (briefing-triggered): closes 10 s after response.done with no new speech
-  - Hard cap: MAX_SESSION_SECS (30 s) regardless of activity
+  - Normal (wake-triggered)    : closes 8 s after response.done with no new speech
+  - Proactive (briefing-triggered): closes 6 s after response.done with no new speech
+  - Hard cap: MAX_SESSION_SECS (60 s) regardless of activity; warns at 50 s
   - Dead-connection guard: DEAD_CONN_TIMEOUT (60 s) if OpenAI sends nothing
   After any close, ONLY OpenWakeWord runs locally. No transcription, no OpenAI.
   User must say "Hey Jarvis" or press the button to re-open.
@@ -59,9 +59,9 @@ CHUNK_SAMPLES        = 1280     # 80 ms @ 16 kHz — OpenWakeWord required chunk
 WAKE_THRESHOLD       = 0.7
 OWW_FLUSH_FRAMES     = 4        # silence frames fed to OWW after wake (~320 ms)
 
-POST_RESPONSE_IDLE            = 3.0    # s after response.done → close (normal session)
-POST_RESPONSE_IDLE_PROACTIVE  = 3.0    # s after response.done → close (proactive session)
-MAX_SESSION_SECS              = 30.0   # hard session cap
+POST_RESPONSE_IDLE            = 8.0    # s after response.done → close (normal session)
+POST_RESPONSE_IDLE_PROACTIVE  = 6.0    # s after response.done → close (proactive session)
+MAX_SESSION_SECS              = 60.0   # hard session cap
 DEAD_CONN_TIMEOUT             = 60.0   # ws.recv() dead-connection guard
 
 _WS_ENDPOINT = "wss://api.openai.com/v1/realtime"
@@ -93,7 +93,7 @@ _SESSION_UPDATE: dict = {
         "input_audio_transcription": {"model": "whisper-1"},
         "turn_detection": {
             "type": "server_vad",
-            "threshold": 0.75,
+            "threshold": 0.85,
             "prefix_padding_ms": 300,
             "silence_duration_ms": 1200,
         },
@@ -112,6 +112,10 @@ _SESSION_UPDATE: dict = {
                         "ip": {
                             "type": "string",
                             "description": "Optional IP for command 1",
+                        },
+                        "username": {
+                            "type": "string",
+                            "description": "Optional username to lock for command 4. Omit to auto-detect from most recent brute force alert.",
                         },
                     },
                     "required": ["command"],
@@ -135,6 +139,11 @@ _wake_button_event: threading.Event = threading.Event()
 _briefing_state: dict        = {"text": None, "alert_id": None}
 _briefing_lock:  threading.Lock = threading.Lock()
 
+# ── Push-to-mute: True while Specter is playing audio back ────────────────────
+# Set by _receive_loop on response.audio.delta; cleared on response.done.
+# _send_loop drops mic frames silently during this window.
+_specter_speaking: bool = False
+
 
 def _mic_callback(indata: np.ndarray, frames: int, time_info, status) -> None:
     try:
@@ -144,8 +153,13 @@ def _mic_callback(indata: np.ndarray, frames: int, time_info, status) -> None:
 
 
 # ── Backend call ──────────────────────────────────────────────────────────────
-async def _call_backend(command: int, ip: str | None) -> str:
-    payload: dict = {"command": command, "args": {"ip": ip} if ip else {}}
+async def _call_backend(command: int, ip: str | None, username: str | None = None) -> str:
+    args: dict = {}
+    if ip:
+        args["ip"] = ip
+    if username:
+        args["username"] = username
+    payload: dict = {"command": command, "args": args}
     try:
         async with httpx.AsyncClient() as client:
             r = await client.post(
@@ -180,7 +194,7 @@ async def _poll_wake_button() -> None:
                             print("[WAKE]   Button press — activating Specter AI", flush=True)
                             _wake_button_event.set()
             except Exception:
-                pass
+                pass  # backend may not be up yet — poll will retry automatically
             await asyncio.sleep(0.5)
 
 
@@ -188,10 +202,10 @@ async def _poll_wake_button() -> None:
 async def _poll_pending_briefing() -> None:
     """
     Every 1 s, fetch the next unspoken alert briefing from the backend.
-    Only triggers when:
-      - hardware_mode is not UNKNOWN (wearable is online)
-      - no Realtime session is currently active
-    Sets _briefing_state so the main loop can open a proactive session.
+    Fires whenever a briefing is queued and no session is active.
+    hardware_mode is NOT checked here — briefings are informational and always
+    speak regardless of wearable dial position. Only defense execution (cmds 1/2/4)
+    requires DEFENSE_READY mode.
     """
     async with httpx.AsyncClient() as client:
         while True:
@@ -199,15 +213,14 @@ async def _poll_pending_briefing() -> None:
                 if not _session_active.is_set():
                     r    = await client.get(f"{BACKEND_URL}/voice/pending-briefing", timeout=2)
                     data = r.json()
-                    if (data.get("briefing")
-                            and data.get("hardware_mode", "UNKNOWN") != "UNKNOWN"):
+                    if data.get("briefing"):
                         with _briefing_lock:
                             # Only set if main loop has already consumed the previous one
                             if _briefing_state["text"] is None:
                                 _briefing_state["text"]     = data["briefing"]
                                 _briefing_state["alert_id"] = data.get("alert_id")
             except Exception:
-                pass
+                pass  # backend may not be up yet — poll will retry automatically
             await asyncio.sleep(1.0)
 
 
@@ -219,10 +232,6 @@ async def _idle_close(ws, delay: float) -> None:
         f"[SESSION] no activity for {int(delay)}s — closing OpenAI connection",
         flush=True,
     )
-    try:
-        await ws.send(json.dumps({"type": "session.close"}))
-    except Exception:
-        pass
     try:
         await ws.close()
     except Exception:
@@ -238,10 +247,15 @@ async def _send_loop(ws) -> None:
                 chunk = _mic_q.get_nowait()
             except sync_queue.Empty:
                 await asyncio.sleep(0.05)
-        await ws.send(json.dumps({
-            "type":  "input_audio_buffer.append",
-            "audio": base64.b64encode(chunk).decode("ascii"),
-        }))
+        if _specter_speaking:
+            continue  # drop frame — Specter is speaking, mute mic to prevent echo
+        try:
+            await ws.send(json.dumps({
+                "type":  "input_audio_buffer.append",
+                "audio": base64.b64encode(chunk).decode("ascii"),
+            }))
+        except websockets.exceptions.ConnectionClosed:
+            return  # WS closed by idle/max timer — exit cleanly, no traceback
 
 
 # ── WebSocket receive loop ────────────────────────────────────────────────────
@@ -264,6 +278,7 @@ async def _receive_loop(
       speech_started       → cancel timer (user speaking — keep session alive)
       Timer fires          → _idle_close() closes WS → ConnectionClosed breaks loop
     """
+    global _specter_speaking
     audio_buf:    bytearray          = bytearray()
     fn_args_buf:  dict[str, str]     = {}
     idle_task:    asyncio.Task | None = None
@@ -343,7 +358,8 @@ async def _receive_loop(
 
             # ── Assistant audio ────────────────────────────────────────
             elif t == "response.audio.delta":
-                _cancel_idle("audio.delta")   # model still speaking — don't start countdown yet
+                _specter_speaking = True       # mute mic while Specter speaks
+                _cancel_idle("audio.delta")    # model still speaking — don't start countdown yet
                 delta = msg.get("delta", "")
                 if delta:
                     audio_buf.extend(base64.b64decode(delta))
@@ -374,11 +390,12 @@ async def _receive_loop(
                 except json.JSONDecodeError:
                     args = {}
 
-                cmd = int(args.get("command", 0))
-                ip  = args.get("ip") or None
+                cmd      = int(args.get("command", 0))
+                ip       = args.get("ip")       or None
+                username = args.get("username") or None
 
-                print(f"[TOOL]   {name}(cmd={cmd}, ip={ip})", flush=True)
-                result = await _call_backend(cmd, ip)
+                print(f"[TOOL]   {name}(cmd={cmd}, ip={ip}, username={username})", flush=True)
+                result = await _call_backend(cmd, ip, username)
                 print(f"[POST]   /voice/command → {result}", flush=True)
 
                 await ws.send(json.dumps({
@@ -393,6 +410,7 @@ async def _receive_loop(
 
             # ── Turn complete → start idle countdown ───────────────────
             elif t == "response.done":
+                _specter_speaking = False      # unmute mic — Specter finished speaking
                 print("[DONE]   response complete", flush=True)
                 _start_idle()
 
@@ -403,6 +421,7 @@ async def _receive_loop(
                 break
 
     finally:
+        _specter_speaking = False  # always unmute on session exit
         _cancel_idle()
 
     if audio_buf:
@@ -443,15 +462,13 @@ async def _run_realtime_session(briefing_text: str | None = None) -> None:
             )
 
             async def _max_session_close() -> None:
-                await asyncio.sleep(MAX_SESSION_SECS)
+                await asyncio.sleep(MAX_SESSION_SECS - 10)
+                print("[SESSION] 10s until max duration close...", flush=True)
+                await asyncio.sleep(10)
                 print(
                     f"[SESSION] {int(MAX_SESSION_SECS)}s max duration reached — closing",
                     flush=True,
                 )
-                try:
-                    await ws.send(json.dumps({"type": "session.close"}))
-                except Exception:
-                    pass
                 try:
                     await ws.close()
                 except Exception:

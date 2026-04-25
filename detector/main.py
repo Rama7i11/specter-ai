@@ -1,5 +1,5 @@
 """
-SPECTER-AI Detector — lightweight SQL injection detection via Apache log tail.
+SPECTER-AI Detector — SQL injection + brute-force detection via Apache log tail.
 
 Replaces Wazuh integrator for actual alerting. Wazuh containers stay up for
 visual SOC dashboard eye candy. This service does the real detection work.
@@ -8,7 +8,7 @@ Flow:
   bank container writes /var/log/bank/access.log
     → (shared Docker volume)
   detector tails that file
-    → regex match on each new line
+    → two detectors run on every new line
   on hit: POST alert JSON to backend /webhook/wazuh
     → backend stores it + forwards to Argon hardware endpoint
 """
@@ -23,10 +23,10 @@ from urllib.parse import unquote_plus
 import requests
 
 # ── Config from environment ────────────────────────────────────────────────
-LOG_PATH      = os.getenv("LOG_PATH",      "/var/log/bank/access.log")
-BACKEND_URL   = os.getenv("BACKEND_URL",   "http://host.docker.internal:8000")
-WEBHOOK_SECRET= os.getenv("WEBHOOK_SECRET","specter-ai-webhook-secret")
-POLL_INTERVAL = float(os.getenv("POLL_INTERVAL", "0.3"))
+LOG_PATH       = os.getenv("LOG_PATH",      "/var/log/bank/access.log")
+BACKEND_URL    = os.getenv("BACKEND_URL",   "http://host.docker.internal:8000")
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET","specter-ai-webhook-secret")
+POLL_INTERVAL  = float(os.getenv("POLL_INTERVAL", "0.3"))
 
 # ── SQLi signatures ────────────────────────────────────────────────────────
 _PATTERNS: list[tuple[str, str]] = [
@@ -47,6 +47,21 @@ PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(pat), name) for pat, name in _PATTERNS
 ]
 
+# ── Brute-force state ──────────────────────────────────────────────────────
+# Tracks timestamps of login POSTs per IP over the last 60 seconds.
+FAILED_LOGINS_BY_IP: dict[str, list[float]] = {}
+
+_BF_WINDOW   = 60   # seconds
+_BF_THRESH   = 5    # attempts in window → alert
+
+# Matches synthetic log lines that check_blocked.php writes for POST params.
+# Shape: POST /index.php?username=foo&password=bar HTTP/1.1
+_LOGIN_POST_RE  = re.compile(r"POST\s+/index\.php\?username=", re.IGNORECASE)
+
+# Detect SQLi characters inside a username field — skip these for BF counting
+# (they're handled by the SQLi detector, not the brute-force detector)
+_SQLI_CHARS_RE  = re.compile(r"['\";]|--|\bOR\b|\bUNION\b|\bSELECT\b|\bAND\b", re.IGNORECASE)
+
 # Apache Combined Log: IP - - [date] "METHOD path proto" status size ...
 _APACHE_RE = re.compile(r'^(\S+)\s+\S+\s+\S+\s+\[[^\]]+\]\s+"([^"]*)"')
 
@@ -58,30 +73,62 @@ def _parse_line(line: str) -> tuple[str | None, str | None, str | None]:
         return None, None, None
     ip  = m.group(1)
     raw = m.group(2)
-    # Double-decode: catches both single-encoded and double-encoded payloads
-    # e.g. %2527 → %27 → '   or   admin%27+OR+%271%27%3D%271 → admin' OR '1'='1
+    # Double-decode: catches both single- and double-encoded payloads
     decoded = unquote_plus(unquote_plus(raw))
     return ip, raw, decoded
 
 
-def _first_match(request_decoded: str) -> str | None:
-    """Return the name of the first matching SQLi pattern, or None.
-    Always called with the decoded request string."""
+def _first_sqli_match(request_decoded: str) -> str | None:
+    """Return the name of the first matching SQLi pattern, or None."""
     for pattern, name in PATTERNS:
         if pattern.search(request_decoded):
             return name
     return None
 
 
-def _send_alert(ip: str, raw_line: str, matched: str) -> None:
-    alert = {
-        "type": "SQL_INJECTION",
-        "ip": ip,
-        "severity": 10,
-        "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
-        "raw_request": raw_line,
-        "matched_pattern": matched,
-    }
+def _detect_brute_force(ip: str, raw_request: str) -> dict | None:
+    """
+    Track login POST attempts per IP. Ignores requests containing SQLi payloads
+    (those are handled by the SQLi detector).
+
+    Returns a BRUTE_FORCE alert dict once _BF_THRESH attempts accumulate within
+    _BF_WINDOW seconds; resets the counter so the next _BF_THRESH attempts can
+    trigger a second alert.
+    """
+    if not _LOGIN_POST_RE.search(raw_request):
+        return None
+
+    # Extract and decode the username value
+    username_m = re.search(r"username=([^&\s\"]+)", raw_request, re.IGNORECASE)
+    if not username_m:
+        return None
+    username = unquote_plus(username_m.group(1))
+
+    # Skip SQLi payloads — the SQLi detector handles those
+    if _SQLI_CHARS_RE.search(username):
+        return None
+
+    now    = time.time()
+    bucket = FAILED_LOGINS_BY_IP.setdefault(ip, [])
+    bucket.append(now)
+    # Prune stale timestamps
+    FAILED_LOGINS_BY_IP[ip] = [t for t in bucket if now - t <= _BF_WINDOW]
+
+    if len(FAILED_LOGINS_BY_IP[ip]) >= _BF_THRESH:
+        FAILED_LOGINS_BY_IP[ip] = []   # reset so the next burst can trigger
+        return {
+            "type":            "BRUTE_FORCE",
+            "ip":              ip,
+            "severity":        7,
+            "timestamp":       datetime.datetime.utcnow().isoformat() + "Z",
+            "raw_request":     raw_request,
+            "matched_pattern": "5_failures_in_60s",
+        }
+    return None
+
+
+def _send_alert(alert: dict) -> None:
+    """POST a completed alert dict to the backend webhook."""
     try:
         r = requests.post(
             f"{BACKEND_URL}/webhook/wazuh",
@@ -89,7 +136,11 @@ def _send_alert(ip: str, raw_line: str, matched: str) -> None:
             headers={"X-Auth-Token": WEBHOOK_SECRET, "Content-Type": "application/json"},
             timeout=5,
         )
-        print(f"[ALERT] ip={ip}  match={matched}  backend={r.status_code}", flush=True)
+        print(
+            f"[ALERT] type={alert.get('type','?')}  ip={alert['ip']}"
+            f"  match={alert['matched_pattern']}  backend={r.status_code}",
+            flush=True,
+        )
     except requests.RequestException as exc:
         print(f"[ERROR] backend unreachable: {exc}", flush=True)
 
@@ -101,7 +152,7 @@ def _wait_for_log() -> None:
 
 
 def _tail() -> None:
-    """Tail LOG_PATH indefinitely, sending alerts on SQLi matches."""
+    """Tail LOG_PATH indefinitely, running both detectors on every new line."""
     _wait_for_log()
     print(f"[DETECTOR] Tailing {LOG_PATH}", flush=True)
 
@@ -112,10 +163,24 @@ def _tail() -> None:
             if line:
                 line = line.rstrip("\n")
                 ip, raw_request, decoded_request = _parse_line(line)
-                if ip and decoded_request:
-                    matched = _first_match(decoded_request)
-                    if matched:
-                        _send_alert(ip, line, matched)
+                if ip and raw_request:
+                    # ── SQLi detector ──────────────────────────────────────
+                    if decoded_request:
+                        matched = _first_sqli_match(decoded_request)
+                        if matched:
+                            _send_alert({
+                                "type":            "SQL_INJECTION",
+                                "ip":              ip,
+                                "severity":        10,
+                                "timestamp":       datetime.datetime.utcnow().isoformat() + "Z",
+                                "raw_request":     line,
+                                "matched_pattern": matched,
+                            })
+
+                    # ── Brute-force detector ───────────────────────────────
+                    bf = _detect_brute_force(ip, raw_request)
+                    if bf:
+                        _send_alert(bf)
             else:
                 # Detect log rotation (file truncated or replaced)
                 try:

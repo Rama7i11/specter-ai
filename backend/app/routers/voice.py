@@ -1,7 +1,9 @@
 import asyncio
 import datetime
 import logging
+import re
 import time
+from urllib.parse import unquote_plus
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -29,7 +31,6 @@ def _record(cmd: int, action: str, result: str, ip: str | None = None) -> None:
 
 
 def _effective_mode() -> str:
-    """Return current hardware mode, or UNKNOWN if heartbeat has timed out / never arrived."""
     if state.last_heartbeat_time is None:
         return "UNKNOWN"
     if (time.time() - state.last_heartbeat_time) > state.HEARTBEAT_TIMEOUT:
@@ -42,7 +43,6 @@ def _mode_display(mode: str) -> str:
 
 
 def _defense_refused(cmd: int, mode: str):
-    """Build a 403 JSONResponse with a Gemini-speakable result string."""
     asyncio.create_task(particle_denied(f"MODE_{mode}_REQUIRED_DEFENSE_READY"))
     speak = (
         f"Defense blocked. The wearable is in {_mode_display(mode)} mode. "
@@ -60,11 +60,18 @@ def _defense_refused(cmd: int, mode: str):
     )
 
 
+def _parse_username_from_raw(raw_request: str) -> str | None:
+    """Extract username query param from a synthetic Apache log request string."""
+    m = re.search(r"username=([^&\s\"]+)", raw_request, re.IGNORECASE)
+    if m:
+        return unquote_plus(m.group(1)) or None
+    return None
+
+
 # ── Wake button endpoints ─────────────────────────────────────────────────
 
 @router.post("/wake")
 async def trigger_wake(request: Request):
-    """Particle webhook → backend wake trigger. Accepts any body shape."""
     state.WAKE_REQUESTED    = True
     state.wake_requested_at = time.time()
     ts = datetime.datetime.utcnow().isoformat() + "Z"
@@ -76,25 +83,19 @@ async def trigger_wake(request: Request):
 async def wake_status():
     if not state.WAKE_REQUESTED or state.wake_requested_at is None:
         return {"wake_requested": False, "age_seconds": None}
-    age = int(time.time() - state.wake_requested_at)
+    age    = int(time.time() - state.wake_requested_at)
     active = age <= state.WAKE_EXPIRY
     return {"wake_requested": active, "age_seconds": age}
 
 
 @router.post("/wake-ack")
 async def wake_ack():
-    """Consume the wake flag atomically. Returns consumed=true if a valid wake was pending."""
     consumed = state.consume_wake()
     return {"consumed": consumed}
 
 
 @router.get("/pending-briefing")
 async def pending_briefing():
-    """
-    Return the oldest unspoken alert briefing and mark it spoken.
-    Also returns the effective hardware_mode so the listener can gate proactive sessions.
-    Returns {"briefing": null} when nothing is pending.
-    """
     hw_mode = state.HARDWARE_MODE
     if state.last_heartbeat_time is None or (
         (time.time() - state.last_heartbeat_time) > state.HEARTBEAT_TIMEOUT
@@ -113,6 +114,8 @@ async def pending_briefing():
             }
     return {"briefing": None, "hardware_mode": hw_mode}
 
+
+# ── Command dispatcher ────────────────────────────────────────────────────
 
 @router.post("/command")
 async def voice_command(body: CommandIn):
@@ -141,17 +144,27 @@ async def voice_command(body: CommandIn):
         _record(cmd, "block_ip", result, ip=ip)
         logger.info("cmd1 block_ip: %s", result)
 
-    # ── cmd 2: clear all IP blocks ────────────────────────────────────────
+    # ── cmd 2: reset all defenses ─────────────────────────────────────────
     elif cmd == 2:
         from defenses.block_ip import unblock_all
+        from defenses.lock_user import unlock_all
 
         mode = _effective_mode()
         if mode != "DEFENSE_READY":
             return _defense_refused(cmd, mode)
 
         asyncio.create_task(particle_executing(2, "RESET"))
-        n = unblock_all()
-        result = f"Cleared {n} blocked IP{'s' if n != 1 else ''} — attacker access restored for re-demo"
+        n_ips   = unblock_all()
+        n_users = unlock_all()
+        parts   = []
+        if n_ips:
+            parts.append(f"{n_ips} IP{'s' if n_ips != 1 else ''} unblocked")
+        if n_users:
+            parts.append(f"{n_users} account{'s' if n_users != 1 else ''} unlocked")
+        result = (
+            ("Cleared: " + ", ".join(parts) + " — demo ready for re-run.")
+            if parts else "Nothing to clear — demo state was already clean."
+        )
         asyncio.create_task(particle_defense_ok("RESET_SUCCESS"))
         _record(cmd, "reset_session", result)
         logger.info("cmd2 reset_session: %s", result)
@@ -159,34 +172,80 @@ async def voice_command(body: CommandIn):
     # ── cmd 3: status report — works in any mode ──────────────────────────
     elif cmd == 3:
         from defenses.block_ip import get_blocked
+        from defenses.lock_user import get_locked
 
         asyncio.create_task(particle_executing(3, "STATUS"))
         recent  = list(state.alerts)[-3:]
         blocked = get_blocked()
+        locked  = get_locked()
 
         if not recent:
             result = "No alerts recorded in this session. Detector is standing by."
         else:
             lines = []
             for i, a in enumerate(recent):
-                lines.append(
-                    f"Alert {i+1}: SQL injection, "
-                    f"pattern {a['matched_pattern']}, "
-                    f"at {a['timestamp'][:19].replace('T', ' ')}"
-                )
-            block_str = (
-                f"{len(blocked)} IP{'s' if len(blocked) != 1 else ''} currently blocked"
-                if blocked else "no IPs currently blocked"
-            )
+                alert_type = a.get("type", "SQL_INJECTION")
+                if "BRUTE" in alert_type.upper():
+                    lines.append(
+                        f"Alert {i+1}: brute force, "
+                        f"pattern {a['matched_pattern']}, "
+                        f"at {a['timestamp'][:19].replace('T', ' ')}"
+                    )
+                else:
+                    lines.append(
+                        f"Alert {i+1}: SQL injection, "
+                        f"pattern {a['matched_pattern']}, "
+                        f"at {a['timestamp'][:19].replace('T', ' ')}"
+                    )
+            parts = []
+            if blocked:
+                parts.append(f"{len(blocked)} IP{'s' if len(blocked) != 1 else ''} blocked")
+            if locked:
+                parts.append(f"{len(locked)} account{'s' if len(locked) != 1 else ''} locked")
+            state_str = (", ".join(parts) + ".") if parts else "no active defenses."
             result = (
                 f"Last {len(recent)} alert{'s' if len(recent) != 1 else ''}: "
                 + "; ".join(lines)
-                + f". Status: {block_str}."
+                + f". Status: {state_str}"
             )
 
         asyncio.create_task(particle_defense_ok("STATUS_SUCCESS"))
         _record(cmd, "status_report", result)
         logger.info("cmd3 status_report generated")
+
+    # ── cmd 4: lock user account ──────────────────────────────────────────
+    elif cmd == 4:
+        from defenses.lock_user import lock_user as do_lock_user
+
+        mode = _effective_mode()
+        if mode != "DEFENSE_READY":
+            return _defense_refused(cmd, mode)
+
+        username = args.get("username")
+        ip       = args.get("ip")
+
+        # Try to resolve username from most recent BRUTE_FORCE alert if not given
+        if not username:
+            for alert in reversed(list(state.alerts)):
+                if "BRUTE" in str(alert.get("type", "")).upper() or \
+                   "fail" in str(alert.get("matched_pattern", "")).lower():
+                    parsed = _parse_username_from_raw(alert.get("raw_request", ""))
+                    if parsed:
+                        username = parsed
+                        ip = ip or alert.get("ip")
+                        break
+
+        if not username:
+            username = "admin"   # last-resort demo fallback
+        if not ip and state.alerts:
+            ip = state.alerts[-1]["ip"]
+
+        asyncio.create_task(particle_executing(4, "LOCK_USER"))
+        newly_locked = do_lock_user(username, ip or "unknown")
+        result = f"Account {username} {'locked by SOC' if newly_locked else 'was already locked'}."
+        asyncio.create_task(particle_defense_ok(f"USER_{username}_LOCKED"))
+        _record(cmd, "lock_user", result, ip=ip)
+        logger.info("cmd4 lock_user: %s", result)
 
     else:
         asyncio.create_task(particle_denied(f"UNKNOWN_CMD_{cmd}"))

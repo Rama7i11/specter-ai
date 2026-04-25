@@ -44,8 +44,10 @@ def consume_wake() -> bool:
     return True
 
 # ── Proactive voice briefings ─────────────────────────────────────────────
-PENDING_BRIEFINGS: deque[dict] = deque(maxlen=20)  # {"alert_id": int, "text": str}
-SPOKEN_ALERT_IDS:  set[int]    = set()             # IDs already dispatched to listener
+PENDING_BRIEFINGS: deque[dict]                  = deque(maxlen=20)  # {"alert_id": int, "text": str}
+SPOKEN_ALERT_IDS:  set[int]                     = set()             # IDs already dispatched to listener
+LAST_BRIEFING_KEY: dict[tuple[str, str], float] = {}                # (type, ip) -> timestamp of last queued briefing
+BRIEFING_DEDUP_WINDOW: int                      = 30                # seconds
 
 _alert_counter: int = 0
 
