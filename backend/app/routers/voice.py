@@ -3,7 +3,7 @@ import datetime
 import logging
 import time
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from app.models.alert import CommandIn
@@ -58,6 +58,60 @@ def _defense_refused(cmd: int, mode: str):
             "denied_reason": mode,
         },
     )
+
+
+# ── Wake button endpoints ─────────────────────────────────────────────────
+
+@router.post("/wake")
+async def trigger_wake(request: Request):
+    """Particle webhook → backend wake trigger. Accepts any body shape."""
+    state.WAKE_REQUESTED    = True
+    state.wake_requested_at = time.time()
+    ts = datetime.datetime.utcnow().isoformat() + "Z"
+    logger.info("wake button pressed")
+    return {"acknowledged": True, "timestamp": ts}
+
+
+@router.get("/wake-status")
+async def wake_status():
+    if not state.WAKE_REQUESTED or state.wake_requested_at is None:
+        return {"wake_requested": False, "age_seconds": None}
+    age = int(time.time() - state.wake_requested_at)
+    active = age <= state.WAKE_EXPIRY
+    return {"wake_requested": active, "age_seconds": age}
+
+
+@router.post("/wake-ack")
+async def wake_ack():
+    """Consume the wake flag atomically. Returns consumed=true if a valid wake was pending."""
+    consumed = state.consume_wake()
+    return {"consumed": consumed}
+
+
+@router.get("/pending-briefing")
+async def pending_briefing():
+    """
+    Return the oldest unspoken alert briefing and mark it spoken.
+    Also returns the effective hardware_mode so the listener can gate proactive sessions.
+    Returns {"briefing": null} when nothing is pending.
+    """
+    hw_mode = state.HARDWARE_MODE
+    if state.last_heartbeat_time is None or (
+        (time.time() - state.last_heartbeat_time) > state.HEARTBEAT_TIMEOUT
+    ):
+        hw_mode = "UNKNOWN"
+
+    while state.PENDING_BRIEFINGS:
+        entry    = state.PENDING_BRIEFINGS.popleft()
+        alert_id = entry["alert_id"]
+        if alert_id not in state.SPOKEN_ALERT_IDS:
+            state.SPOKEN_ALERT_IDS.add(alert_id)
+            return {
+                "briefing":      entry["text"],
+                "alert_id":      alert_id,
+                "hardware_mode": hw_mode,
+            }
+    return {"briefing": None, "hardware_mode": hw_mode}
 
 
 @router.post("/command")

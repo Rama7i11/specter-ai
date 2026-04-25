@@ -24,6 +24,29 @@ HARDWARE_MODE:        str         = "UNKNOWN"   # MONITOR | ALERT_ONLY | DEFENSE
 last_heartbeat_time:  float | None = None
 HEARTBEAT_TIMEOUT:    int          = 60         # seconds — treat as UNKNOWN if exceeded
 
+# ── Wake button (updated by POST /voice/wake) ─────────────────────────────
+WAKE_REQUESTED:    bool        = False
+wake_requested_at: float | None = None
+WAKE_EXPIRY:       int          = 10   # seconds — button press expires after this
+
+
+def consume_wake() -> bool:
+    """Atomically read-and-clear the wake flag. Returns True if a valid wake was pending."""
+    global WAKE_REQUESTED, wake_requested_at
+    if not WAKE_REQUESTED:
+        return False
+    if wake_requested_at is None or (time.time() - wake_requested_at) > WAKE_EXPIRY:
+        WAKE_REQUESTED = False
+        wake_requested_at = None
+        return False
+    WAKE_REQUESTED = False
+    wake_requested_at = None
+    return True
+
+# ── Proactive voice briefings ─────────────────────────────────────────────
+PENDING_BRIEFINGS: deque[dict] = deque(maxlen=20)  # {"alert_id": int, "text": str}
+SPOKEN_ALERT_IDS:  set[int]    = set()             # IDs already dispatched to listener
+
 _alert_counter: int = 0
 
 
