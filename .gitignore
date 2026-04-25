@@ -1,0 +1,16 @@
+﻿.env
+.env.local
+*.ppn
+*.onnx
+__pycache__/
+*.pyc
+venv/
+.venv/
+node_modules/
+*.log
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+wazuh-data/
+mysql-data/
