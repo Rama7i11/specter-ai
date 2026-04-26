@@ -33,12 +33,26 @@ async def heartbeat(body: HeartbeatIn):
 
 @router.get("/alerts")
 async def get_alerts():
-    return {"alerts": list(state.alerts)}
+    out = []
+    for a in state.alerts:
+        item = dict(a)
+        item.setdefault("city",    a.get("geo_city")    or "")
+        item.setdefault("country", a.get("geo_country") or "")
+        item.setdefault("lat",     a.get("lat"))
+        item.setdefault("lon",     a.get("lon"))
+        out.append(item)
+    return {"alerts": out}
 
 
 @router.get("/defenses")
 async def get_defenses():
-    return {"defenses": list(state.defenses)}
+    from defenses.block_ip import get_blocked
+    from defenses.lock_user import get_locked
+    return {
+        "defenses":     list(state.defenses),
+        "blocked_ips":  list(get_blocked()),
+        "locked_users": list(get_locked()),
+    }
 
 
 @router.get("/attack-log")
@@ -49,6 +63,17 @@ async def get_attack_log():
 @router.get("/pagerduty-incidents")
 async def get_pagerduty_incidents():
     return {"incidents": list(state.PAGERDUTY_INCIDENTS)}
+
+
+@router.get("/history")
+async def get_history():
+    return {
+        "alerts":              list(state.ALERT_HISTORY),
+        "defenses":            list(state.DEFENSE_HISTORY),
+        "pagerduty":           list(state.PAGERDUTY_HISTORY),
+        "total_alerts_ever":   state.TOTAL_ALERTS_EVER,
+        "total_defenses_ever": state.TOTAL_DEFENSES_EVER,
+    }
 
 
 @router.get("/status")
@@ -91,6 +116,11 @@ async def get_status():
         "hardware_mode":           effective_mode,
         "seconds_since_heartbeat": seconds_since_hb,
         "pagerduty_incidents":     len(state.PAGERDUTY_INCIDENTS),
+        "specter_mode":            state.SPECTER_STATE,
+        "voice_state":             state.SPECTER_STATE,
+        "voice_level":             state.SPECTER_VOICE_LEVEL,
+        "dial_position":           effective_mode,
+        "heartbeat_seconds_ago":   seconds_since_hb,
     }
 
 

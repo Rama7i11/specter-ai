@@ -47,6 +47,14 @@ PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(pat), name) for pat, name in _PATTERNS
 ]
 
+# ── Alert dedup state ──────────────────────────────────────────────────────
+# Suppresses duplicate alerts for the same (ip, raw_request) within 2s.
+# Keeps the dashboard clean when one HTTP request matches multiple SQLi
+# patterns or is logged repeatedly by the bank container.
+RECENT_ALERTS: dict[tuple[str, int], float] = {}   # (ip, hash(raw_request)) -> timestamp
+_DEDUP_WINDOW = 2.0    # seconds
+_DEDUP_PRUNE  = 60.0   # seconds — prune entries older than this
+
 # ── Brute-force state ──────────────────────────────────────────────────────
 # Tracks timestamps of login POSTs per IP over the last 60 seconds.
 FAILED_LOGINS_BY_IP: dict[str, list[float]] = {}
@@ -128,7 +136,23 @@ def _detect_brute_force(ip: str, raw_request: str) -> dict | None:
 
 
 def _send_alert(alert: dict) -> None:
-    """POST a completed alert dict to the backend webhook."""
+    """POST a completed alert dict to the backend webhook, with dedup."""
+    ip          = alert["ip"]
+    raw_request = alert.get("raw_request", "")
+    now         = time.time()
+    key         = (ip, hash(raw_request))
+
+    last = RECENT_ALERTS.get(key)
+    if last is not None and now - last < _DEDUP_WINDOW:
+        print(f"[DEDUP] skipping duplicate alert for {ip}", flush=True)
+        return
+    RECENT_ALERTS[key] = now
+
+    # Prune stale entries so the dict doesn't grow unbounded.
+    stale = [k for k, t in RECENT_ALERTS.items() if now - t > _DEDUP_PRUNE]
+    for k in stale:
+        RECENT_ALERTS.pop(k, None)
+
     try:
         r = requests.post(
             f"{BACKEND_URL}/webhook/wazuh",

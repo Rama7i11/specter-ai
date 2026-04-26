@@ -3,7 +3,15 @@
     "allow": [
       "Bash(py *)",
       "Bash(python3 *)",
-      "Bash(python *)"
+      "Bash(python *)",
+      "Bash(certutil -hashfile TEMP_SOC/index.html SHA256)",
+      "Bash(certutil -hashfile backend/static/soc/index.html SHA256)",
+      "Bash(certutil -hashfile TEMP_SOC/styles.css SHA256)",
+      "Bash(certutil -hashfile backend/static/soc/styles.css SHA256)",
+      "Bash(certutil -hashfile TEMP_SOC/script.js SHA256)",
+      "Bash(certutil -hashfile backend/static/soc/script.js SHA256)",
+      "PowerShell(Get-Content *)",
+      "Bash(node --check C:/specter-ai/backend/static/soc/script.js)"
     ]
   }
 }

@@ -125,14 +125,22 @@ async def demo_reset():
     state.PENDING_BRIEFINGS.clear()
     state.SPOKEN_ALERT_IDS.clear()
     state.LAST_BRIEFING_KEY.clear()
+    state.ALERT_HISTORY.clear()
+    state.DEFENSE_HISTORY.clear()
+    state.PAGERDUTY_HISTORY.clear()
+    state.TOTAL_ALERTS_EVER   = 0
+    state.TOTAL_DEFENSES_EVER = 0
     state.last_alert_time     = None
     state.HARDWARE_MODE       = "UNKNOWN"
     state.last_heartbeat_time = None
     state.WAKE_REQUESTED      = False
     state.wake_requested_at   = None
+    state.SPECTER_STATE        = "ASLEEP"
+    state.SPECTER_VOICE_LEVEL  = 0.0
+    state.SPECTER_STATE_UPDATED = 0.0
     state._alert_counter      = 0
 
-    logger.info("demo/reset: full state cleared")
+    logger.info("demo/reset: full state cleared (incl. history)")
     return {
         "reset":   True,
         "cleared": [
@@ -140,6 +148,8 @@ async def demo_reset():
             "alerts", "defenses", "attack_log",
             "pagerduty_incidents",
             "pending_briefings", "spoken_alert_ids", "briefing_dedup_keys",
+            "alert_history", "defense_history", "pagerduty_history",
+            "total_alerts_ever", "total_defenses_ever",
             "hardware_mode", "alert_counter",
         ],
     }

@@ -8,8 +8,11 @@ from dotenv import load_dotenv
 # when state.py and routers first access env vars.
 load_dotenv(dotenv_path=Path(__file__).parents[2] / ".env")
 
+import pathlib
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.routers import api, demo, hardware, voice, webhook
 
@@ -34,6 +37,14 @@ app.include_router(hardware.router)
 app.include_router(api.router)
 app.include_router(voice.router)
 app.include_router(demo.router)
+
+static_dir = pathlib.Path(__file__).parent.parent / "static"
+if static_dir.exists():
+    app.mount(
+        "/dashboards",
+        StaticFiles(directory=str(static_dir), html=True),
+        name="dashboards",
+    )
 
 
 @app.get("/health")

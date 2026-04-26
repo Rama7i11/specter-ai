@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SPECTER-AI · SOC Command Center</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap"
+    rel="stylesheet"
+  />
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <svg class="shape-overlays" viewBox="0 0 100 100" preserveAspectRatio="none">
+    <defs>
+      <linearGradient id="gradient1" x1="0%" y1="0%" x2="0%" y2="100%">
+        <stop offset="0%" stop-color="#19e6bd"></stop>
+        <stop offset="100%" stop-color="#7effdf"></stop>
+      </linearGradient>
+      <linearGradient id="gradient2" x1="0%" y1="0%" x2="0%" y2="100%">
+        <stop offset="0%" stop-color="#b8fff1"></stop>
+        <stop offset="100%" stop-color="#0f7f67"></stop>
+      </linearGradient>
+    </defs>
+    <path class="shape-overlays__path" fill="url(#gradient2)"></path>
+    <path class="shape-overlays__path" fill="url(#gradient1)"></path>
+  </svg>
+
+  <main class="soc-shell">
+    <header class="header-bar panel-glass" data-reveal>
+      <div class="brand-block">
+        <div class="logo-mark" aria-hidden="true"></div>
+        <div>
+          <h1 class="heading-text">SPECTER-AI · SOC Command Center</h1>
+          <p>Team AEGIS | Wearable Security Operations System</p>
+        </div>
+      </div>
+
+      <div class="clock-block">
+        <span>LIVE TIME</span>
+        <strong id="liveClock">--:--:--</strong>
+      </div>
+
+      <section class="wearable-panel specter-panel" aria-live="polite">
+        <div id="specterBadge" class="specter-badge specter-asleep">
+          <span class="specter-prefix">SPECTER:</span>
+          <span id="specterModeText">Asleep</span>
+        </div>
+        <div class="specter-audio-row">
+          <div id="specterWave" class="specter-wave" aria-hidden="true">
+            <span class="wave-bar"></span>
+            <span class="wave-bar"></span>
+            <span class="wave-bar"></span>
+            <span class="wave-bar"></span>
+            <span class="wave-bar"></span>
+            <span class="wave-bar"></span>
+          </div>
+          <span id="specterHint" class="specter-hint">Awaiting voice channel...</span>
+        </div>
+      </section>
+    </header>
+
+    <section class="layout-grid">
+      <section class="left-column">
+        <article class="panel-glass map-panel" data-reveal>
+          <div class="panel-head">
+            <h2>Live Threat Map</h2>
+            <span id="mapPinCount" class="pill">0 active pins</span>
+          </div>
+          <div id="threatMap" class="threat-map"></div>
+        </article>
+
+        <article class="panel-glass alerts-panel" data-reveal>
+          <div class="panel-head">
+            <h2>Live Alerts Feed</h2>
+            <span id="alertsCount" class="pill">0 alerts</span>
+          </div>
+          <div id="alertsFeed" class="alert-feed"></div>
+        </article>
+      </section>
+
+      <section class="right-column">
+        <div class="stat-stack">
+          <article class="panel-glass stat-card" data-reveal>
+            <div class="stat-label">ALERTS TODAY</div>
+            <div id="alertsTodayValue" class="stat-number">0</div>
+          </article>
+
+          <article id="blockedCard" class="panel-glass stat-card expandable" data-reveal>
+            <button class="expand-toggle" type="button" data-target="blockedList">
+              <span>BLOCKED IPs</span>
+              <span id="blockedIpsValue" class="stat-number compact">0</span>
+            </button>
+            <ul id="blockedList" class="expand-list"></ul>
+          </article>
+
+          <article id="lockedCard" class="panel-glass stat-card expandable" data-reveal>
+            <button class="expand-toggle" type="button" data-target="lockedList">
+              <span>LOCKED USERS</span>
+              <span id="lockedUsersValue" class="stat-number compact">0</span>
+            </button>
+            <ul id="lockedList" class="expand-list"></ul>
+          </article>
+        </div>
+
+        <article class="panel-glass defense-panel" data-reveal>
+          <div class="panel-head">
+            <h2>Defense Log</h2>
+            <span class="pill">Recent 5</span>
+          </div>
+          <div id="defenseLog" class="terminal-feed"></div>
+        </article>
+
+        <article class="panel-glass pagerduty-panel" data-reveal>
+          <div class="panel-head">
+            <h2>PagerDuty Incidents</h2>
+            <span id="pagerDutyCount" class="pill">0 escalated</span>
+          </div>
+          <div id="pagerDutyList" class="incident-list"></div>
+        </article>
+
+        <article class="panel-glass history-panel" data-reveal>
+          <div class="panel-head">
+            <h2>Threat History Archive</h2>
+            <div class="history-head-right">
+              <span id="historyCount" class="pill">0 archived</span>
+              <button id="openArchiveBtn" type="button" class="archive-btn">View Archive</button>
+            </div>
+          </div>
+          <div class="history-stats">
+            <div class="history-stat">
+              <span class="history-stat-label">Total Alerts Ever</span>
+              <span id="historyTotalAlerts" class="history-stat-value">0</span>
+            </div>
+            <div class="history-stat">
+              <span class="history-stat-label">Total Defenses Ever</span>
+              <span id="historyTotalDefenses" class="history-stat-value">0</span>
+            </div>
+          </div>
+          <div id="historyFeed" class="terminal-feed history-feed"></div>
+        </article>
+      </section>
+
+      <div id="archiveModal" class="archive-modal" hidden>
+        <div class="archive-backdrop" data-archive-close></div>
+        <article class="panel-glass archive-dialog">
+          <div class="panel-head">
+            <h2>Threat History Archive · Full Database</h2>
+            <div class="history-head-right">
+              <span id="archiveSummary" class="pill">0 alerts · 0 defenses · 0 escalations</span>
+              <button id="closeArchiveBtn" type="button" class="archive-btn" data-archive-close>Close</button>
+            </div>
+          </div>
+          <div class="archive-body">
+            <section class="archive-section">
+              <h3 class="archive-section-title">Alerts</h3>
+              <div id="archiveAlerts" class="alert-feed"></div>
+            </section>
+            <section class="archive-section">
+              <h3 class="archive-section-title">Defenses</h3>
+              <div id="archiveDefenses" class="terminal-feed"></div>
+            </section>
+            <section class="archive-section">
+              <h3 class="archive-section-title">PagerDuty Escalations</h3>
+              <div id="archivePagerDuty" class="incident-list"></div>
+            </section>
+          </div>
+        </article>
+      </div>
+    </section>
+  </main>
+  
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/countup.js@2.8.0/dist/countUp.umd.js"></script>
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+  <script src="script.js"></script>
+</body>
+</html>

@@ -28,6 +28,7 @@ def _record(cmd: int, action: str, result: str, ip: str | None = None) -> None:
         "ip":        ip,
         "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
     })
+    state.TOTAL_DEFENSES_EVER += 1
 
 
 def _effective_mode() -> str:
@@ -94,6 +95,36 @@ async def wake_ack():
     return {"consumed": consumed}
 
 
+@router.post("/state")
+async def set_specter_state(request: Request):
+    body = await request.json()
+    new_state = str(body.get("state", "ASLEEP")).upper()
+    if new_state not in ("ASLEEP", "LISTENING", "THINKING", "HACKING"):
+        new_state = "ASLEEP"
+    state.SPECTER_STATE = new_state
+    if "level" in body:
+        try:
+            lvl = float(body.get("level", 0.0))
+            state.SPECTER_VOICE_LEVEL = max(0.0, min(1.0, lvl))
+        except (TypeError, ValueError):
+            pass
+    state.SPECTER_STATE_UPDATED = time.time()
+    return {"ok": True}
+
+
+@router.get("/state")
+async def get_specter_state():
+    age = (
+        int(time.time() - state.SPECTER_STATE_UPDATED)
+        if state.SPECTER_STATE_UPDATED else None
+    )
+    return {
+        "state":       state.SPECTER_STATE,
+        "level":       state.SPECTER_VOICE_LEVEL,
+        "age_seconds": age,
+    }
+
+
 @router.get("/pending-briefing")
 async def pending_briefing():
     hw_mode = state.HARDWARE_MODE
@@ -156,18 +187,36 @@ async def voice_command(body: CommandIn):
         asyncio.create_task(particle_executing(2, "RESET"))
         n_ips   = unblock_all()
         n_users = unlock_all()
-        parts   = []
-        if n_ips:
-            parts.append(f"{n_ips} IP{'s' if n_ips != 1 else ''} unblocked")
-        if n_users:
-            parts.append(f"{n_users} account{'s' if n_users != 1 else ''} unlocked")
+
+        # Archive live state into history (preserved across cmd 2; only
+        # /demo/reset wipes history).
+        archived_alerts = len(state.alerts)
+        state.ALERT_HISTORY.extend(state.alerts)
+        state.DEFENSE_HISTORY.extend(state.defenses)
+        state.PAGERDUTY_HISTORY.extend(state.PAGERDUTY_INCIDENTS)
+
+        # Clear the live dashboard state.
+        state.alerts.clear()
+        state.defenses.clear()
+        state.attack_log.clear()
+        state.PENDING_BRIEFINGS.clear()
+        state.SPOKEN_ALERT_IDS.clear()
+        state.LAST_BRIEFING_KEY.clear()
+        state.PAGERDUTY_INCIDENTS.clear()
+        state._alert_counter = 0
+
         result = (
-            ("Cleared: " + ", ".join(parts) + " — demo ready for re-run.")
-            if parts else "Nothing to clear — demo state was already clean."
+            f"Defenses reset and dashboard cleared. "
+            f"{archived_alerts} alert{'s' if archived_alerts != 1 else ''} archived to history."
         )
         asyncio.create_task(particle_defense_ok("RESET_SUCCESS"))
-        _record(cmd, "reset_session", result)
-        logger.info("cmd2 reset_session: %s", result)
+        # Intentionally do NOT _record() — cmd 2 wipes state.defenses, so re-adding
+        # a self-entry would defeat the "fresh slate" intent. The archive is the
+        # audit trail.
+        logger.info(
+            "cmd2 reset_session: archived=%d, %d ips unblocked, %d users unlocked",
+            archived_alerts, n_ips, n_users,
+        )
 
     # ── cmd 3: status report — works in any mode ──────────────────────────
     elif cmd == 3:

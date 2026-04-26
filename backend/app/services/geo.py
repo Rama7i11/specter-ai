@@ -23,7 +23,7 @@ _PRIVATE_NETS = [
     ipaddress.ip_network("fc00::/7"),
 ]
 
-_NULL_GEO = {"country": None, "city": None, "country_code": None}
+_NULL_GEO = {"country": None, "city": None, "country_code": None, "lat": None, "lon": None}
 
 
 def _is_private(ip: str) -> bool:
@@ -44,7 +44,10 @@ async def lookup(ip: str) -> dict:
         return _cache[ip]
 
     if _is_private(ip):
-        result = {"country": None, "city": "private/local", "country_code": None}
+        result = {
+            "country": None, "city": "private/local",
+            "country_code": None, "lat": None, "lon": None,
+        }
         _cache[ip] = result
         return result
 
@@ -52,7 +55,7 @@ async def lookup(ip: str) -> dict:
         async with httpx.AsyncClient() as client:
             r = await client.get(
                 f"http://ip-api.com/json/{ip}",
-                params={"fields": "status,country,city,countryCode"},
+                params={"fields": "status,country,city,countryCode,lat,lon"},
                 timeout=2.0,
             )
             data = r.json()
@@ -61,6 +64,8 @@ async def lookup(ip: str) -> dict:
                     "country":      data.get("country"),
                     "city":         data.get("city"),
                     "country_code": data.get("countryCode"),
+                    "lat":          data.get("lat"),
+                    "lon":          data.get("lon"),
                 }
             else:
                 result = dict(_NULL_GEO)

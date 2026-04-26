@@ -85,9 +85,14 @@ async def receive_alert(
         "alert_id":    alert_id,
         "geo_city":    geo.get("city")    if geo else None,
         "geo_country": geo.get("country") if geo else None,
+        "city":        (geo.get("city")    if geo else None) or "",
+        "country":     (geo.get("country") if geo else None) or "",
+        "lat":         geo.get("lat") if geo else None,
+        "lon":         geo.get("lon") if geo else None,
     }
 
     state.alerts.append(entry)
+    state.TOTAL_ALERTS_EVER += 1
     state.attack_log.append(alert.raw_request)
     state.last_alert_time = time.time()
 

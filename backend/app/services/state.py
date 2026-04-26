@@ -24,6 +24,11 @@ HARDWARE_MODE:        str         = "UNKNOWN"   # MONITOR | ALERT_ONLY | DEFENSE
 last_heartbeat_time:  float | None = None
 HEARTBEAT_TIMEOUT:    int          = 60         # seconds — treat as UNKNOWN if exceeded
 
+# ── Specter voice state (updated by POST /voice/state from listener) ──────
+SPECTER_STATE:         str   = "ASLEEP"   # ASLEEP | LISTENING | THINKING | HACKING
+SPECTER_VOICE_LEVEL:   float = 0.0        # 0.0 .. 1.0
+SPECTER_STATE_UPDATED: float = 0.0
+
 # ── Wake button (updated by POST /voice/wake) ─────────────────────────────
 WAKE_REQUESTED:    bool        = False
 wake_requested_at: float | None = None
@@ -47,6 +52,16 @@ def consume_wake() -> bool:
 # Each: {"incident_id": str, "alert_id": int, "summary": str,
 #        "status": "triggered", "created_at": str}
 PAGERDUTY_INCIDENTS: deque[dict] = deque(maxlen=20)
+
+# ── Archive of past demo runs (populated by cmd 2 soft-reset) ─────────────
+ALERT_HISTORY:      deque[dict] = deque(maxlen=200)
+DEFENSE_HISTORY:    deque[dict] = deque(maxlen=200)
+PAGERDUTY_HISTORY:  deque[dict] = deque(maxlen=200)
+
+# Monotonic counters that survive cmd 2 (only /demo/reset zeros them).
+# Drives /api/history "X attacks across Y demo runs" framing.
+TOTAL_ALERTS_EVER:   int = 0
+TOTAL_DEFENSES_EVER: int = 0
 
 # ── Proactive voice briefings ─────────────────────────────────────────────
 PENDING_BRIEFINGS: deque[dict]                  = deque(maxlen=20)  # {"alert_id": int, "text": str}

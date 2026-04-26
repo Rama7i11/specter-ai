@@ -155,6 +155,18 @@ def _mic_callback(indata: np.ndarray, frames: int, time_info, status) -> None:
         pass
 
 
+# ── Backend state push (fire-and-forget) ─────────────────────────────────────
+async def _post_specter_state(state_str: str, level: float = 0.0) -> None:
+    try:
+        async with httpx.AsyncClient(timeout=1.0) as client:
+            await client.post(
+                f"{BACKEND_URL}/voice/state",
+                json={"state": state_str, "level": level},
+            )
+    except Exception:
+        pass  # never break the listener on dashboard plumbing
+
+
 # ── Backend call ──────────────────────────────────────────────────────────────
 async def _call_backend(command: int, ip: str | None, username: str | None = None) -> str:
     args: dict = {}
@@ -352,7 +364,11 @@ async def _receive_loop(
             # ── User speech ────────────────────────────────────────────
             elif t == "input_audio_buffer.speech_started":
                 _cancel_idle("speech_started")
+                asyncio.create_task(_post_specter_state("LISTENING", 0.6))
                 print("[USER]   speaking...", flush=True)
+
+            elif t == "input_audio_buffer.speech_stopped":
+                asyncio.create_task(_post_specter_state("THINKING", 0.3))
 
             elif t == "conversation.item.input_audio_transcription.completed":
                 transcript = msg.get("transcript", "").strip()
@@ -361,6 +377,8 @@ async def _receive_loop(
 
             # ── Assistant audio ────────────────────────────────────────
             elif t == "response.audio.delta":
+                if not _specter_speaking:
+                    asyncio.create_task(_post_specter_state("HACKING", 0.8))
                 _specter_speaking = True       # mute mic while Specter speaks
                 _cancel_idle("audio.delta")    # model still speaking — don't start countdown yet
                 delta = msg.get("delta", "")
@@ -446,6 +464,8 @@ async def _run_realtime_session(briefing_text: str | None = None) -> None:
     label     = "proactive briefing" if briefing_text else OPENAI_REALTIME_MODEL
     print(f"[REALTIME] connecting to OpenAI ({label})...", flush=True)
 
+    asyncio.create_task(_post_specter_state("LISTENING", 0.4))
+
     try:
         async with websockets.connect(
             uri,
@@ -496,6 +516,11 @@ async def _run_realtime_session(briefing_text: str | None = None) -> None:
         print(f"[REALTIME] Network error: {exc}", flush=True)
     except Exception as exc:  # noqa: BLE001
         print(f"[REALTIME] Unexpected error: {exc}", flush=True)
+    finally:
+        try:
+            asyncio.create_task(_post_specter_state("ASLEEP", 0.0))
+        except RuntimeError:
+            pass  # event loop may be closing
 
 
 # ── Main: OpenWakeWord loop ───────────────────────────────────────────────────
