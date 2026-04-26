@@ -121,6 +121,7 @@ async def demo_reset():
     state.alerts.clear()
     state.defenses.clear()
     state.attack_log.clear()
+    state.PAGERDUTY_INCIDENTS.clear()
     state.PENDING_BRIEFINGS.clear()
     state.SPOKEN_ALERT_IDS.clear()
     state.LAST_BRIEFING_KEY.clear()
@@ -137,6 +138,7 @@ async def demo_reset():
         "cleared": [
             "blocks", "locked_users",
             "alerts", "defenses", "attack_log",
+            "pagerduty_incidents",
             "pending_briefings", "spoken_alert_ids", "briefing_dedup_keys",
             "hardware_mode", "alert_counter",
         ],

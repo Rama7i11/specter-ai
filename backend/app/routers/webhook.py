@@ -1,4 +1,5 @@
 import logging
+import os
 import time
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
@@ -7,6 +8,7 @@ from app.models.alert import AlertIn
 from app.services import state
 from app.services.geo import lookup as geo_lookup
 from app.services.hardware_client import particle_alert
+from app.services.pagerduty import create_incident as pd_create_incident
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -100,9 +102,14 @@ async def receive_alert(
     else:
         state.LAST_BRIEFING_KEY[key] = time.time()
         briefing_text = _build_briefing(alert.ip, alert.matched_pattern, alert.severity, geo)
+        if alert.severity >= 9:
+            briefing_text += " - PagerDuty incident created, on-call team notified."
         state.PENDING_BRIEFINGS.append({"alert_id": alert_id, "text": briefing_text})
 
     background_tasks.add_task(particle_alert, alert.ip, alert.severity)
+
+    if alert.severity >= 9 and os.getenv("PAGERDUTY_ROUTING_KEY"):
+        background_tasks.add_task(pd_create_incident, entry)
 
     logger.info("alert #%d  ip=%-16s  pattern=%s", alert_id, alert.ip, alert.matched_pattern)
     return {"status": "received", "alert_id": alert_id}

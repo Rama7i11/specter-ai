@@ -43,6 +43,11 @@ def consume_wake() -> bool:
     wake_requested_at = None
     return True
 
+# ── PagerDuty incidents (created on severity >= 9 alerts) ────────────────
+# Each: {"incident_id": str, "alert_id": int, "summary": str,
+#        "status": "triggered", "created_at": str}
+PAGERDUTY_INCIDENTS: deque[dict] = deque(maxlen=20)
+
 # ── Proactive voice briefings ─────────────────────────────────────────────
 PENDING_BRIEFINGS: deque[dict]                  = deque(maxlen=20)  # {"alert_id": int, "text": str}
 SPOKEN_ALERT_IDS:  set[int]                     = set()             # IDs already dispatched to listener

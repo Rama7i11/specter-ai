@@ -79,7 +79,10 @@ _SYSTEM_INSTRUCTIONS = (
     "'reset everything', map to the right number. "
     "Immediately call execute_defensive_command WITHOUT confirming verbally first. "
     "After the function returns its result, briefly speak that result. "
-    "Don't pad with filler."
+    "Don't pad with filler. "
+    "When critical alerts (severity 9-10) trigger, Specter automatically escalates "
+    "to PagerDuty. The incident appears in the on-call team's queue. "
+    "Mention this when reporting status if PagerDuty incidents exist."
 )
 
 _SESSION_UPDATE: dict = {

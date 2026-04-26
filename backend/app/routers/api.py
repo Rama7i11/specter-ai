@@ -46,6 +46,11 @@ async def get_attack_log():
     return {"lines": list(state.attack_log)}
 
 
+@router.get("/pagerduty-incidents")
+async def get_pagerduty_incidents():
+    return {"incidents": list(state.PAGERDUTY_INCIDENTS)}
+
+
 @router.get("/status")
 async def get_status():
     from defenses.block_ip import get_blocked
@@ -85,6 +90,7 @@ async def get_status():
         "uptime":                  int(now - state.START_TIME),
         "hardware_mode":           effective_mode,
         "seconds_since_heartbeat": seconds_since_hb,
+        "pagerduty_incidents":     len(state.PAGERDUTY_INCIDENTS),
     }
 
 
